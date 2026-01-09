@@ -1,13 +1,5 @@
-Perfect — here is the **final, clean `README.md`** you can **copy-paste directly** into
-`StudyOS/README.md`.
-
-This version is **judge-friendly, hackathon-ready, and technically accurate**.
-
----
-
-```markdown
 # 🎓 StudyOS — Agentic AI Learning Operating System
-
+```markdown
 StudyOS is an **agentic AI-powered learning system** that goes beyond chatbots and dashboards.  
 It models a student’s academic life, reasons about progress and risk, and **autonomously plans, monitors, reflects, and adapts** their study journey.
 
