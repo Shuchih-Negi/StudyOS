@@ -1,657 +1,584 @@
-import React, { useState } from 'react';
-import { CheckCircle2, Circle, Info, Users, Headphones, Calendar, TrendingUp, AlertCircle, Brain, Zap, Target, Map } from 'lucide-react';
+"""
+StudyOS Universal API
+Multi-agent AI system for ANY exam preparation
+"""
 
-const StudyOS = () => {
-  const [currentStep, setCurrentStep] = useState('intake'); // intake, loading, dashboard
-  const [systemMode, setSystemMode] = useState('ON TRACK');
-  const [activeView, setActiveView] = useState('your_study');
-  const [showReasoningModal, setShowReasoningModal] = useState(null);
-  const [agentLogs, setAgentLogs] = useState([]);
-  
-  // Form state
-  const [formData, setFormData] = useState({
-    exam: '',
-    deadline: '',
-    subjects: '',
-    studyHours: '4',
-    weakAreas: ''
-  });
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+import asyncio
+import json
+import uuid
 
-  // Generated data
-  const [tasks, setTasks] = useState([]);
-  const [weeklyPlan, setWeeklyPlan] = useState([]);
-  const [journeyMap, setJourneyMap] = useState([]);
+app = FastAPI(
+    title="StudyOS Universal API",
+    description="Multi-Agent AI System for Universal Exam Preparation",
+    version="2.0.0"
+)
 
-  const simulateAgentProcessing = () => {
-    setCurrentStep('loading');
-    setAgentLogs([]);
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# Universal Data Models
+# ============================================================================
+
+class StudentSetup(BaseModel):
+    exam_name: str
+    exam_type: str  # competitive, academic, certification, language, other
+    deadline: int
+    subjects: List[str]
+    subject_weightages: Dict[str, int]  # {subject: weightage%}
+    study_hours: int
+    weak_areas: Optional[str] = ""
+    strengths: Optional[str] = ""
+    previous_attempts: str = "0"
+    target_score: Optional[str] = ""
+    study_style: str = "balanced"  # intensive, balanced, relaxed
+
+class TestSubmission(BaseModel):
+    student_id: str
+    test_id: str
+    answers: Dict[int, int]
+
+class TaskUpdate(BaseModel):
+    task_id: int
+    completed: bool
+
+# ============================================================================
+# WebSocket Manager
+# ============================================================================
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
     
-    const logs = [
-      { agent: 'Context Agent', action: 'Building student world model...', time: 0 },
-      { agent: 'Context Agent', action: 'Analyzing: JEE Advanced, 42 days, Math/Physics/Chemistry', time: 1000 },
-      { agent: 'Strategy Agent', action: 'Evaluating long-term strategy...', time: 2000 },
-      { agent: 'Strategy Agent', action: 'Prioritizing weak areas: Calculus, Thermodynamics', time: 3000 },
-      { agent: 'Planning Agent', action: 'Generating 6-week roadmap...', time: 4000 },
-      { agent: 'Planning Agent', action: 'Creating daily missions with effort estimation', time: 5000 },
-      { agent: 'Execution Agent', action: 'Preparing revision questions and resources', time: 6000 },
-      { agent: 'Orchestrator', action: '✓ System ready. Monitoring activated.', time: 7000 }
-    ];
+    async def connect(self, student_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[student_id] = websocket
+        print(f"✓ Connected: {student_id}")
+    
+    def disconnect(self, student_id: str):
+        if student_id in self.active_connections:
+            del self.active_connections[student_id]
+    
+    async def send_log(self, student_id: str, agent: str, action: str, status: str):
+        if student_id in self.active_connections:
+            try:
+                await self.active_connections[student_id].send_json({
+                    "agent": agent,
+                    "action": action,
+                    "status": status,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except:
+                self.disconnect(student_id)
 
-    logs.forEach(log => {
-      setTimeout(() => {
-        setAgentLogs(prev => [...prev, log]);
-      }, log.time);
-    });
+manager = ConnectionManager()
 
-    setTimeout(() => {
-      // Generate tasks
-      setTasks([
-        { id: 1, text: 'Calculus: Derivatives practice (30 min)', effort: 'Medium', reason: 'Identified as weak area', completed: false },
-        { id: 2, text: 'Physics: Thermodynamics numericals (45 min)', effort: 'High', reason: 'High exam weightage + weak area', completed: false },
-        { id: 3, text: 'Chemistry: Organic reactions revision (20 min)', effort: 'Low', reason: 'Maintaining strong foundation', completed: false },
-      ]);
+# ============================================================================
+# Universal Agent System
+# ============================================================================
 
-      // Generate weekly plan
-      setWeeklyPlan([
-        { week: 1, focus: 'Foundation Strengthening', status: 'current' },
-        { week: 2, focus: 'Weak Area Deep Dive', status: 'upcoming' },
-        { week: 3, focus: 'Integration & Practice', status: 'upcoming' },
-        { week: 4, focus: 'Mock Tests & Analysis', status: 'upcoming' },
-        { week: 5, focus: 'Revision Sprint', status: 'upcoming' },
-        { week: 6, focus: 'Final Prep & Rest', status: 'upcoming' }
-      ]);
-
-      // Generate journey map
-      setJourneyMap([
-        { phase: 'Foundation', weeks: '1-2', goal: 'Strengthen weak areas', status: 'active' },
-        { phase: 'Application', weeks: '3-4', goal: 'Problem-solving mastery', status: 'pending' },
-        { phase: 'Mastery', weeks: '5-6', goal: 'Exam simulation & peak', status: 'pending' }
-      ]);
-
-      setCurrentStep('dashboard');
-    }, 7500);
-  };
-
-  const toggleTask = (id) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
-  };
-
-  const getModeColor = () => {
-    switch(systemMode) {
-      case 'ON TRACK': return 'bg-gradient-to-r from-blue-600 to-purple-600';
-      case 'AT RISK': return 'bg-gradient-to-r from-amber-500 to-orange-500';
-      case 'RECOVERY MODE': return 'bg-gradient-to-r from-red-500 to-pink-500';
-      default: return 'bg-gray-600';
-    }
-  };
-
-  // Intake Form
-  if (currentStep === 'intake') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-gray-100 flex items-center justify-center p-6">
-        <div className="max-w-2xl w-full">
-          <div className="text-center mb-8">
-            <div className="flex items-center justify-center gap-3 mb-4">
-              <Brain className="text-purple-500" size={40} />
-              <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-                StudyOS
-              </h1>
-            </div>
-            <p className="text-gray-400">Autonomous AI-Powered Learning System</p>
-          </div>
-
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 shadow-2xl">
-            <h2 className="text-2xl font-semibold mb-6 text-white">Student Journey Setup</h2>
-            
-            <div className="space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Target Exam</label>
-                <input
-                  type="text"
-                  value={formData.exam}
-                  onChange={(e) => setFormData({...formData, exam: e.target.value})}
-                  placeholder="e.g., JEE Advanced, NEET, SAT"
-                  className="w-full bg-black border border-gray-700 rounded px-4 py-3 text-gray-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Days to Deadline</label>
-                <input
-                  type="number"
-                  value={formData.deadline}
-                  onChange={(e) => setFormData({...formData, deadline: e.target.value})}
-                  placeholder="e.g., 42"
-                  className="w-full bg-black border border-gray-700 rounded px-4 py-3 text-gray-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Subjects (comma-separated)</label>
-                <input
-                  type="text"
-                  value={formData.subjects}
-                  onChange={(e) => setFormData({...formData, subjects: e.target.value})}
-                  placeholder="e.g., Math, Physics, Chemistry"
-                  className="w-full bg-black border border-gray-700 rounded px-4 py-3 text-gray-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Daily Study Hours Available</label>
-                <select
-                  value={formData.studyHours}
-                  onChange={(e) => setFormData({...formData, studyHours: e.target.value})}
-                  className="w-full bg-black border border-gray-700 rounded px-4 py-3 text-gray-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                >
-                  <option value="2">2 hours</option>
-                  <option value="4">4 hours</option>
-                  <option value="6">6 hours</option>
-                  <option value="8">8 hours</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Weak Areas / Concerns</label>
-                <textarea
-                  value={formData.weakAreas}
-                  onChange={(e) => setFormData({...formData, weakAreas: e.target.value})}
-                  placeholder="e.g., Calculus derivatives, Thermodynamics, Organic chemistry..."
-                  rows="3"
-                  className="w-full bg-black border border-gray-700 rounded px-4 py-3 text-gray-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={simulateAgentProcessing}
-              disabled={!formData.exam || !formData.deadline || !formData.subjects}
-              className="w-full mt-8 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-700 disabled:to-gray-700 text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all"
-            >
-              <Zap size={20} />
-              Activate AI Agent System
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Loading/Processing State
-  if (currentStep === 'loading') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-gray-100 flex items-center justify-center p-6">
-        <div className="max-w-3xl w-full">
-          <div className="text-center mb-8">
-            <Brain className="text-purple-500 mx-auto mb-4 animate-pulse" size={48} />
-            <h2 className="text-2xl font-semibold mb-2">Multi-Agent System Processing</h2>
-            <p className="text-gray-400">Building your personalized learning strategy...</p>
-          </div>
-
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-2xl">
-            <div className="space-y-3">
-              {agentLogs.map((log, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-start gap-3 p-3 bg-black border border-gray-800 rounded animate-fadeIn"
-                >
-                  <div className="flex-shrink-0">
-                    {log.agent === 'Orchestrator' ? (
-                      <CheckCircle2 className="text-green-500" size={20} />
-                    ) : (
-                      <div className="w-2 h-2 mt-2 rounded-full bg-purple-500 animate-pulse"></div>
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-purple-400">{log.agent}</div>
-                    <div className="text-sm text-gray-300">{log.action}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Main Dashboard
-  return (
-    <div className="flex h-screen bg-black text-gray-100">
-      {/* Left Sidebar */}
-      <div className="w-64 bg-gray-950 flex flex-col border-r border-gray-800">
-        <div className="p-4 border-b border-gray-800">
-          <div className="flex items-center gap-2">
-            <Brain className="text-purple-500" size={24} />
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-              StudyOS
-            </h1>
-          </div>
-        </div>
+class UniversalAgentSystem:
+    
+    @staticmethod
+    async def process_setup(student_data: StudentSetup, student_id: str):
+        """Process any exam with multi-agent system"""
         
-        <nav className="flex-1 p-3">
-          <div className="space-y-1">
-            <button 
-              onClick={() => setActiveView('your_study')}
-              className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-                activeView === 'your_study' 
-                  ? 'bg-gradient-to-r from-blue-900 to-purple-900 text-white border border-blue-800' 
-                  : 'text-gray-400 hover:bg-gray-900 hover:text-white'
-              }`}
-            >
-              # your_study
-            </button>
-            <button 
-              onClick={() => setActiveView('journey')}
-              className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-                activeView === 'journey' 
-                  ? 'bg-gradient-to-r from-blue-900 to-purple-900 text-white border border-blue-800' 
-                  : 'text-gray-400 hover:bg-gray-900 hover:text-white'
-              }`}
-            >
-              # journey_map
-            </button>
-            <button 
-              onClick={() => setActiveView('agents')}
-              className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-                activeView === 'agents' 
-                  ? 'bg-gradient-to-r from-blue-900 to-purple-900 text-white border border-blue-800' 
-                  : 'text-gray-400 hover:bg-gray-900 hover:text-white'
-              }`}
-            >
-              # agent_logs
-            </button>
-          </div>
-
-          <div className="mt-6 pt-6 border-t border-gray-800">
-            <div className="text-xs text-gray-500 uppercase mb-2 px-3">Voice Rooms</div>
-            <button className="w-full text-left px-3 py-2 rounded-lg text-gray-400 hover:bg-gray-900 hover:text-white flex items-center gap-2 transition-all">
-              <Headphones size={16} className="text-blue-500" />
-              <span>Focus</span>
-              <span className="ml-auto text-xs text-green-400">3 active</span>
-            </button>
-            <button className="w-full text-left px-3 py-2 rounded-lg text-gray-400 hover:bg-gray-900 hover:text-white flex items-center gap-2 transition-all">
-              <Headphones size={16} className="text-purple-500" />
-              <span>Co-study</span>
-              <span className="ml-auto text-xs text-green-400">7 active</span>
-            </button>
-          </div>
-        </nav>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Top Bar */}
-        <div className="h-16 bg-gray-950 border-b border-gray-800 flex items-center justify-between px-6">
-          <div className="flex items-center gap-4">
-            <div>
-              <div className="text-sm font-semibold text-white">{formData.exam || 'JEE Advanced 2024'}</div>
-              <div className="text-xs text-gray-400">{formData.deadline || '42'} days to deadline</div>
-            </div>
-          </div>
-
-          <button 
-            onClick={() => setShowReasoningModal('system')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${getModeColor()} text-white hover:opacity-90 transition-all`}
-          >
-            {systemMode}
-            <Info size={14} />
-          </button>
-
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <div className="text-xs text-gray-400">Cognitive Load</div>
-              <div className="text-sm font-medium text-blue-400">Medium</div>
-            </div>
-            <div className="text-right">
-              <div className="text-xs text-gray-400">Streak</div>
-              <div className="text-sm font-medium text-purple-400">7 days</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Main Surface */}
-        <div className="flex-1 overflow-y-auto p-6 bg-gradient-to-br from-gray-950 via-black to-gray-950">
-          {activeView === 'your_study' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Today's Mission */}
-              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-xl">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Target className="text-purple-500" size={24} />
-                    <h2 className="text-xl font-semibold text-white">Today's Mission</h2>
-                  </div>
-                  <button 
-                    onClick={() => setShowReasoningModal('planning')}
-                    className="text-gray-400 hover:text-purple-400 transition-colors"
-                  >
-                    <Info size={18} />
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {tasks.map(task => (
-                    <div key={task.id} className="flex items-start gap-3 p-4 rounded-lg bg-black border border-gray-800 hover:border-purple-900 transition-all">
-                      <button 
-                        onClick={() => toggleTask(task.id)}
-                        className="mt-0.5 flex-shrink-0"
-                      >
-                        {task.completed ? (
-                          <CheckCircle2 className="text-purple-500" size={20} />
-                        ) : (
-                          <Circle className="text-gray-600" size={20} />
-                        )}
-                      </button>
-                      <div className="flex-1">
-                        <div className={`text-sm ${task.completed ? 'line-through text-gray-600' : 'text-gray-200'}`}>
-                          {task.text}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1">
-                          <span className="text-xs text-gray-500">Effort: {task.effort}</span>
-                          <span className="text-xs text-blue-400 italic">→ {task.reason}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-4 pt-4 border-t border-gray-800">
-                  <details className="text-sm text-gray-400">
-                    <summary className="cursor-pointer hover:text-purple-400 transition-colors">Agent Reasoning</summary>
-                    <p className="mt-2 text-gray-500 italic bg-black border border-gray-800 rounded p-3">
-                      "Strategy Agent prioritized weak area strengthening before advancing to new topics. Planning Agent allocated time based on your {formData.studyHours}-hour daily availability."
-                    </p>
-                  </details>
-                </div>
-              </div>
-
-              {/* Drift Radar */}
-              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-xl">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-white">Drift Detection Radar</h2>
-                  <button 
-                    onClick={() => setShowReasoningModal('drift')}
-                    className="text-gray-400 hover:text-purple-400 transition-colors"
-                  >
-                    <Info size={18} />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center">
-                    <div className="w-16 h-16 mx-auto rounded-full bg-blue-500 bg-opacity-20 border-4 border-blue-500 flex items-center justify-center">
-                      <TrendingUp className="text-blue-500" size={24} />
-                    </div>
-                    <div className="mt-2 text-sm text-gray-300">Pace vs Plan</div>
-                    <div className="text-xs text-blue-400">Normal</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="w-16 h-16 mx-auto rounded-full bg-purple-500 bg-opacity-20 border-4 border-purple-500 flex items-center justify-center">
-                      <AlertCircle className="text-purple-500" size={24} />
-                    </div>
-                    <div className="mt-2 text-sm text-gray-300">Cognitive Load</div>
-                    <div className="text-xs text-purple-400">Optimal</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="w-16 h-16 mx-auto rounded-full bg-blue-500 bg-opacity-20 border-4 border-blue-500 flex items-center justify-center">
-                      <Calendar className="text-blue-500" size={24} />
-                    </div>
-                    <div className="mt-2 text-sm text-gray-300">Consistency</div>
-                    <div className="text-xs text-blue-400">Strong</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Social Presence */}
-              <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-xl">
-                <div className="flex items-center gap-3 text-sm text-gray-400">
-                  <Users size={16} className="text-purple-500" />
-                  <span>5 peers studying now</span>
-                  <div className="flex gap-1 ml-2">
-                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
-                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" style={{animationDelay: '0.2s'}}></div>
-                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" style={{animationDelay: '0.4s'}}></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeView === 'journey' && (
-            <div className="max-w-6xl mx-auto">
-              <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 shadow-xl">
-                <div className="flex items-center gap-2 mb-8">
-                  <Map className="text-purple-500" size={28} />
-                  <h2 className="text-2xl font-semibold text-white">JEE Advanced Learning Journey</h2>
-                </div>
+        # Context Agent
+        await manager.send_log(student_id, "Context Agent", 
+            f"Building learning model for {student_data.exam_name}...", "processing")
+        await asyncio.sleep(1)
+        
+        subjects_str = ", ".join(student_data.subjects[:3])
+        if len(student_data.subjects) > 3:
+            subjects_str += f" + {len(student_data.subjects) - 3} more"
+        
+        await manager.send_log(student_id, "Context Agent",
+            f"Analyzing: {len(student_data.subjects)} subjects, {student_data.deadline} days, {student_data.study_hours}h daily", 
+            "complete")
+        
+        # Strategy Agent
+        await asyncio.sleep(0.5)
+        await manager.send_log(student_id, "Strategy Agent", 
+            "Evaluating optimal learning strategy...", "processing")
+        await asyncio.sleep(1.5)
+        
+        strategy_focus = student_data.weak_areas if student_data.weak_areas else "Balanced coverage"
+        target = f"Target: {student_data.target_score}" if student_data.target_score else "Maximum score"
+        
+        await manager.send_log(student_id, "Strategy Agent",
+            f"Prioritizing: {strategy_focus}, {target}", "complete")
+        
+        # Planning Agent
+        await asyncio.sleep(0.5)
+        await manager.send_log(student_id, "Planning Agent", 
+            "Generating personalized roadmap...", "processing")
+        await asyncio.sleep(1.5)
+        
+        await manager.send_log(student_id, "Planning Agent",
+            f"Creating {student_data.study_style} study plan with daily missions", "complete")
+        
+        # Execution Agent
+        await asyncio.sleep(0.5)
+        await manager.send_log(student_id, "Execution Agent", 
+            "Preparing practice questions and resources...", "processing")
+        await asyncio.sleep(1.5)
+        
+        await manager.send_log(student_id, "Execution Agent",
+            "Setting up adaptive testing system", "complete")
+        
+        # Orchestrator
+        await asyncio.sleep(0.5)
+        await manager.send_log(student_id, "Orchestrator",
+            f"✓ StudyOS activated for {student_data.exam_name}. Monitoring your journey.", "ready")
+        
+        return {
+            "context": {
+                "exam": student_data.exam_name,
+                "type": student_data.exam_type,
+                "days": student_data.deadline,
+                "subjects": student_data.subjects,
+                "style": student_data.study_style
+            },
+            "strategy": {
+                "focus": student_data.weak_areas,
+                "target": student_data.target_score
+            },
+            "status": "ready"
+        }
+    
+    @staticmethod
+    def generate_daily_tasks(subjects: List[str], weightages: Dict[str, int], 
+                            study_hours: int, weak_areas: str):
+        """Generate tasks based on subjects and weightages"""
+        
+        tasks = []
+        task_id = 1
+        
+        # Sort subjects by weightage (highest first)
+        sorted_subjects = sorted(subjects, 
+                                key=lambda s: weightages.get(s, 0), 
+                                reverse=True)
+        
+        # Allocate time based on weightage
+        total_weightage = sum(weightages.values()) or 100
+        
+        for subject in sorted_subjects[:5]:  # Max 5 subjects per day
+            weightage = weightages.get(subject, 25)
+            time_allocation = round((weightage / total_weightage) * study_hours * 60)
+            
+            if time_allocation < 10:
+                continue
+            
+            is_weak = weak_areas and subject.lower() in weak_areas.lower()
+            effort = "High" if weightage > 30 or is_weak else "Medium" if weightage > 20 else "Low"
+            reason = "Identified as weak area" if is_weak else f"{weightage}% exam weightage"
+            
+            tasks.append({
+                "id": task_id,
+                "text": f"{subject}: Core concepts practice ({time_allocation} min)",
+                "effort": effort,
+                "reason": reason,
+                "completed": False,
+                "subject": subject,
+                "weightage": weightage
+            })
+            task_id += 1
+        
+        # Add daily test
+        tasks.append({
+            "id": task_id,
+            "text": f"Daily Mini-Test: {min(len(subjects), 5)} questions (15 min)",
+            "effort": "Medium",
+            "reason": "Daily assessment and progress tracking",
+            "completed": False,
+            "subject": "Test",
+            "weightage": 0
+        })
+        
+        return tasks
+    
+    @staticmethod
+    def generate_daily_test(subjects: List[str]):
+        """Generate questions for any exam"""
+        
+        questions = []
+        selected_subjects = subjects[:5]  # Max 5 questions
+        
+        for idx, subject in enumerate(selected_subjects):
+            questions.append({
+                "id": idx + 1,
+                "subject": subject,
+                "question": f"Sample {subject} question. This will be replaced with actual exam-specific content based on your syllabus and exam pattern.",
+                "options": [
+                    f"{subject} - Option A",
+                    f"{subject} - Option B", 
+                    f"{subject} - Option C",
+                    f"{subject} - Option D"
+                ],
+                "correct": idx % 4,  # Rotate correct answers
+                "explanation": f"Detailed explanation for {subject} concept. The AI agent will generate contextual explanations based on your specific exam pattern and syllabus.",
+                "difficulty": ["Easy", "Medium", "Hard"][idx % 3]
+            })
+        
+        return questions
+    
+    @staticmethod
+    def generate_learning_journey(deadline_days: int, subjects: List[str], 
+                                  study_style: str, exam_type: str):
+        """Generate adaptive learning journey for any exam"""
+        
+        weeks = min(max(deadline_days // 7, 4), 16)
+        phases = []
+        
+        # Determine intensity multiplier based on study style
+        intensity_map = {
+            "intensive": {"foundation": "High", "practice": "Very High", "mastery": "Very High", "revision": "Medium"},
+            "balanced": {"foundation": "Medium", "practice": "High", "mastery": "High", "revision": "Medium"},
+            "relaxed": {"foundation": "Low", "practice": "Medium", "mastery": "Medium", "revision": "Low"}
+        }
+        
+        intensities = intensity_map.get(study_style, intensity_map["balanced"])
+        
+        if weeks <= 4:
+            # Crash course
+            phases = [
+                {
+                    "week": 1,
+                    "focus": "Rapid Foundation Building",
+                    "status": "current",
+                    "topics": f"Core concepts - All {len(subjects)} subjects",
+                    "intensity": "High"
+                },
+                {
+                    "week": 2,
+                    "focus": "Problem Solving Sprint",
+                    "status": "upcoming",
+                    "topics": "Practice and application",
+                    "intensity": "Very High"
+                },
+                {
+                    "week": 3,
+                    "focus": "Mock Tests & Analysis",
+                    "status": "upcoming",
+                    "topics": "Full-length practice tests",
+                    "intensity": "High"
+                },
+                {
+                    "week": 4,
+                    "focus": "Final Revision",
+                    "status": "upcoming",
+                    "topics": "Weak areas + key concepts",
+                    "intensity": "Medium"
+                }
+            ]
+        
+        elif weeks <= 8:
+            # Standard preparation
+            week_num = 1
+            
+            # Subject-focused weeks
+            for i, subject in enumerate(subjects[:min(len(subjects), 4)]):
+                phases.append({
+                    "week": week_num,
+                    "focus": f"{subject} Deep Dive",
+                    "status": "current" if week_num == 1 else "upcoming",
+                    "topics": "Comprehensive coverage",
+                    "intensity": intensities["foundation"]
+                })
+                week_num += 1
+            
+            # Practice & mastery weeks
+            remaining = 8 - week_num + 1
+            if remaining >= 3:
+                phases.append({
+                    "week": week_num,
+                    "focus": "Integration & Practice",
+                    "status": "upcoming",
+                    "topics": "Cross-topic problems",
+                    "intensity": intensities["practice"]
+                })
+                week_num += 1
                 
-                {/* Animated Path Visualization */}
-                <div className="relative py-12">
-                  {/* Vertical animated path line */}
-                  <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-600 via-purple-600 to-blue-600 transform -translate-x-1/2 overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white to-transparent opacity-30 animate-pulse"></div>
-                  </div>
+                phases.append({
+                    "week": week_num,
+                    "focus": "Mock Test Series",
+                    "status": "upcoming",
+                    "topics": "Exam simulation",
+                    "intensity": intensities["mastery"]
+                })
+                week_num += 1
+                
+                phases.append({
+                    "week": week_num,
+                    "focus": "Final Prep & Rest",
+                    "status": "upcoming",
+                    "topics": "Light revision + recovery",
+                    "intensity": intensities["revision"]
+                })
+        
+        else:
+            # Extended preparation
+            foundation_weeks = max(2, weeks // 3)
+            practice_weeks = max(2, weeks // 4)
+            mastery_weeks = max(2, weeks // 5)
+            revision_weeks = weeks - foundation_weeks - practice_weeks - mastery_weeks
+            
+            week_num = 1
+            
+            # Foundation
+            for i in range(foundation_weeks):
+                subject_idx = i % len(subjects)
+                phases.append({
+                    "week": week_num,
+                    "focus": f"Foundation: {subjects[subject_idx]}",
+                    "status": "current" if week_num == 1 else "upcoming",
+                    "topics": "Fundamentals and basics",
+                    "intensity": intensities["foundation"]
+                })
+                week_num += 1
+            
+            # Practice
+            for i in range(practice_weeks):
+                phases.append({
+                    "week": week_num,
+                    "focus": f"Advanced Practice Week {i+1}",
+                    "status": "upcoming",
+                    "topics": "Problem-solving and application",
+                    "intensity": intensities["practice"]
+                })
+                week_num += 1
+            
+            # Mastery
+            for i in range(mastery_weeks):
+                phases.append({
+                    "week": week_num,
+                    "focus": f"Mastery Week {i+1}",
+                    "status": "upcoming",
+                    "topics": "Mock tests and analysis",
+                    "intensity": intensities["mastery"]
+                })
+                week_num += 1
+            
+            # Revision
+            for i in range(revision_weeks):
+                is_final = i == revision_weeks - 1
+                phases.append({
+                    "week": week_num,
+                    "focus": "Final Prep & Rest" if is_final else f"Revision Sprint {i+1}",
+                    "status": "upcoming",
+                    "topics": "Light review + recovery" if is_final else "Comprehensive revision",
+                    "intensity": "Low" if is_final else intensities["revision"]
+                })
+                week_num += 1
+        
+        return phases[:weeks]
 
-                  {/* Journey Nodes */}
-                  <div className="space-y-16">
-                    {/* Week 1-2: Foundation */}
-                    <div className="relative flex items-center">
-                      <div className="w-1/2 pr-12 text-right">
-                        <div className="inline-block bg-gradient-to-r from-blue-900 to-purple-900 border-2 border-purple-500 rounded-lg p-4 shadow-xl animate-fadeIn">
-                          <div className="text-xs text-purple-400 font-semibold mb-1">WEEK 1-2 • FOUNDATION</div>
-                          <h3 className="text-lg font-bold text-white mb-2">Mathematics Fundamentals</h3>
-                          <div className="space-y-1 text-sm text-gray-300">
-                            <div>• Calculus: Limits & Derivatives</div>
-                            <div>• Algebra: Complex Numbers</div>
-                            <div>• Trigonometry: Identities</div>
-                          </div>
-                          <div className="mt-3 pt-3 border-t border-purple-800">
-                            <div className="text-xs text-blue-400">20 hours • 15 topics</div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="absolute left-1/2 transform -translate-x-1/2 w-8 h-8 bg-purple-600 rounded-full border-4 border-gray-900 shadow-lg z-10 animate-pulse">
-                        <div className="absolute inset-0 bg-purple-400 rounded-full animate-ping opacity-75"></div>
-                      </div>
-                      <div className="w-1/2 pl-12">
-                        <div className="inline-block bg-gradient-to-r from-blue-900 to-purple-900 border-2 border-blue-500 rounded-lg p-4 shadow-xl animate-fadeIn" style={{animationDelay: '0.2s'}}>
-                          <div className="text-xs text-blue-400 font-semibold mb-1">WEEK 1-2 • FOUNDATION</div>
-                          <h3 className="text-lg font-bold text-white mb-2">Physics Core Concepts</h3>
-                          <div className="space-y-1 text-sm text-gray-300">
-                            <div>• Mechanics: Laws of Motion</div>
-                            <div>• Thermodynamics: Heat Transfer</div>
-                            <div>• Waves: SHM Basics</div>
-                          </div>
-                          <div className="mt-3 pt-3 border-t border-blue-800">
-                            <div className="text-xs text-purple-400">18 hours • 12 topics</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+# Storage
+STUDENTS_DB = {}
+TESTS_DB = {}
 
-                    {/* Week 3-4: Deep Dive */}
-                    <div className="relative flex items-center">
-                      <div className="w-1/2 pr-12 text-right">
-                        <div className="inline-block bg-gradient-to-r from-purple-900 to-blue-900 border-2 border-purple-500 rounded-lg p-4 shadow-xl animate-fadeIn" style={{animationDelay: '0.4s'}}>
-                          <div className="text-xs text-purple-400 font-semibold mb-1">WEEK 3-4 • DEEP DIVE</div>
-                          <h3 className="text-lg font-bold text-white mb-2">Advanced Problem Solving</h3>
-                          <div className="space-y-1 text-sm text-gray-300">
-                            <div>• Integration Techniques</div>
-                            <div>• Rotational Dynamics</div>
-                            <div>• Chemical Equilibrium</div>
-                          </div>
-                          <div className="mt-3 pt-3 border-t border-purple-800">
-                            <div className="text-xs text-blue-400">25 hours • 18 topics</div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="absolute left-1/2 transform -translate-x-1/2 w-8 h-8 bg-blue-600 rounded-full border-4 border-gray-900 shadow-lg z-10">
-                        <div className="absolute inset-0 bg-blue-400 rounded-full animate-ping opacity-75" style={{animationDelay: '0.5s'}}></div>
-                      </div>
-                      <div className="w-1/2 pl-12">
-                        <div className="inline-block bg-gradient-to-r from-purple-900 to-blue-900 border-2 border-blue-500 rounded-lg p-4 shadow-xl animate-fadeIn" style={{animationDelay: '0.6s'}}>
-                          <div className="text-xs text-blue-400 font-semibold mb-1">WEEK 3-4 • DEEP DIVE</div>
-                          <h3 className="text-lg font-bold text-white mb-2">Chemistry Applications</h3>
-                          <div className="space-y-1 text-sm text-gray-300">
-                            <div>• Organic Reactions Mastery</div>
-                            <div>• Electrochemistry Numericals</div>
-                            <div>• Coordination Compounds</div>
-                          </div>
-                          <div className="mt-3 pt-3 border-t border-blue-800">
-                            <div className="text-xs text-purple-400">22 hours • 14 topics</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+# ============================================================================
+# API Endpoints
+# ============================================================================
 
-                    {/* Week 5: Mock Tests */}
-                    <div className="relative flex items-center justify-center">
-                      <div className="absolute left-1/2 transform -translate-x-1/2 w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-full border-4 border-gray-900 shadow-lg z-10 animate-pulse">
-                        <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-blue-400 rounded-full animate-ping opacity-75" style={{animationDelay: '1s'}}></div>
-                      </div>
-                      <div className="bg-gradient-to-r from-purple-900 via-blue-900 to-purple-900 border-2 border-purple-500 rounded-lg p-6 shadow-xl max-w-xl animate-fadeIn" style={{animationDelay: '0.8s'}}>
-                        <div className="text-xs text-purple-400 font-semibold mb-1 text-center">WEEK 5 • TESTING PHASE</div>
-                        <h3 className="text-xl font-bold text-white mb-3 text-center">Full-Length Mock Tests</h3>
-                        <div className="grid grid-cols-2 gap-3 text-sm text-gray-300">
-                          <div>• Mock Test 1: Math Focus</div>
-                          <div>• Mock Test 2: Physics Focus</div>
-                          <div>• Mock Test 3: Chemistry Focus</div>
-                          <div>• Mock Test 4: Full Syllabus</div>
-                        </div>
-                        <div className="mt-4 pt-4 border-t border-purple-800 text-center">
-                          <div className="text-xs text-blue-400">30 hours • Performance Analysis</div>
-                        </div>
-                      </div>
-                    </div>
+@app.get("/")
+async def root():
+    return {
+        "status": "online",
+        "service": "StudyOS Universal API",
+        "version": "2.0.0",
+        "capabilities": "Any exam, Any subject, Fully adaptive",
+        "agents": ["Context", "Strategy", "Planning", "Execution", "Orchestrator"]
+    }
 
-                    {/* Week 6: Revision Sprint */}
-                    <div className="relative flex items-center">
-                      <div className="w-1/2 pr-12 text-right">
-                        <div className="inline-block bg-gradient-to-r from-blue-900 to-purple-900 border-2 border-blue-500 rounded-lg p-4 shadow-xl animate-fadeIn" style={{animationDelay: '1s'}}>
-                          <div className="text-xs text-blue-400 font-semibold mb-1">WEEK 6 • REVISION</div>
-                          <h3 className="text-lg font-bold text-white mb-2">Quick Revision Topics</h3>
-                          <div className="space-y-1 text-sm text-gray-300">
-                            <div>• Formula Sheet Review</div>
-                            <div>• Common Mistake Analysis</div>
-                            <div>• Speed Practice</div>
-                          </div>
-                          <div className="mt-3 pt-3 border-t border-blue-800">
-                            <div className="text-xs text-purple-400">15 hours • Revision</div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="absolute left-1/2 transform -translate-x-1/2 w-8 h-8 bg-purple-600 rounded-full border-4 border-gray-900 shadow-lg z-10">
-                        <div className="absolute inset-0 bg-purple-400 rounded-full animate-ping opacity-75" style={{animationDelay: '1.2s'}}></div>
-                      </div>
-                      <div className="w-1/2 pl-12">
-                        <div className="inline-block bg-gradient-to-r from-blue-900 to-purple-900 border-2 border-purple-500 rounded-lg p-4 shadow-xl animate-fadeIn" style={{animationDelay: '1.2s'}}>
-                          <div className="text-xs text-purple-400 font-semibold mb-1">WEEK 6 • FINAL PREP</div>
-                          <h3 className="text-lg font-bold text-white mb-2">Exam Day Strategy</h3>
-                          <div className="space-y-1 text-sm text-gray-300">
-                            <div>• Time Management Practice</div>
-                            <div>• Previous Year Analysis</div>
-                            <div>• Rest & Recovery</div>
-                          </div>
-                          <div className="mt-3 pt-3 border-t border-purple-800">
-                            <div className="text-xs text-blue-400">10 hours • Strategy</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+@app.post("/api/student/setup")
+async def setup_student(data: StudentSetup):
+    try:
+        student_id = str(uuid.uuid4())
+        
+        STUDENTS_DB[student_id] = {
+            "id": student_id,
+            "exam_name": data.exam_name,
+            "exam_type": data.exam_type,
+            "deadline": data.deadline,
+            "subjects": data.subjects,
+            "subject_weightages": data.subject_weightages,
+            "study_hours": data.study_hours,
+            "weak_areas": data.weak_areas,
+            "strengths": data.strengths,
+            "previous_attempts": data.previous_attempts,
+            "target_score": data.target_score,
+            "study_style": data.study_style,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "message": f"Agent system activated for {data.exam_name}"
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-                    {/* Final Goal */}
-                    <div className="relative flex items-center justify-center">
-                      <div className="absolute left-1/2 transform -translate-x-1/2 w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full border-4 border-gray-900 shadow-2xl z-10 animate-bounce">
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <Target className="text-white" size={20} />
-                        </div>
-                      </div>
-                      <div className="bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 border-2 border-purple-400 rounded-lg p-6 shadow-2xl max-w-md animate-fadeIn" style={{animationDelay: '1.4s'}}>
-                        <h3 className="text-2xl font-bold text-white mb-2 text-center">🎯 JEE Advanced 2024</h3>
-                        <p className="text-center text-gray-200 text-sm">Ready to achieve your target rank!</p>
-                        <div className="mt-4 pt-4 border-t border-purple-400 text-center">
-                          <div className="text-xs text-blue-200">Total: 140+ hours • 60+ topics covered</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+@app.websocket("/ws/agents/{student_id}")
+async def websocket_agent_logs(websocket: WebSocket, student_id: str):
+    await manager.connect(student_id, websocket)
+    
+    try:
+        if student_id in STUDENTS_DB:
+            student_data = STUDENTS_DB[student_id]
+            setup_data = StudentSetup(
+                exam_name=student_data["exam_name"],
+                exam_type=student_data["exam_type"],
+                deadline=student_data["deadline"],
+                subjects=student_data["subjects"],
+                subject_weightages=student_data["subject_weightages"],
+                study_hours=student_data["study_hours"],
+                weak_areas=student_data["weak_areas"],
+                strengths=student_data.get("strengths", ""),
+                previous_attempts=student_data.get("previous_attempts", "0"),
+                target_score=student_data.get("target_score", ""),
+                study_style=student_data.get("study_style", "balanced")
+            )
+            await UniversalAgentSystem.process_setup(setup_data, student_id)
+        
+        while True:
+            await websocket.receive_text()
+            
+    except WebSocketDisconnect:
+        manager.disconnect(student_id)
 
-                {/* Agent Insight */}
-                <div className="mt-8 bg-black border border-gray-800 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <Brain className="text-purple-500 flex-shrink-0 mt-1" size={20} />
-                    <div>
-                      <div className="text-sm font-medium text-purple-400 mb-1">Strategy Agent Insight</div>
-                      <p className="text-sm text-gray-300">
-                        This journey prioritizes weak areas in weeks 1-2, intensifies problem-solving in weeks 3-4, validates learning through mocks in week 5, and optimizes retention in week 6. The path adapts based on your daily performance.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+@app.get("/api/tasks/daily/{student_id}")
+async def get_daily_tasks(student_id: str):
+    if student_id not in STUDENTS_DB:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    student = STUDENTS_DB[student_id]
+    tasks = UniversalAgentSystem.generate_daily_tasks(
+        student["subjects"],
+        student["subject_weightages"],
+        student["study_hours"],
+        student["weak_areas"]
+    )
+    
+    return {"tasks": tasks}
 
-          {activeView === 'agents' && (
-            <div className="max-w-4xl mx-auto">
-              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-xl">
-                <div className="flex items-center gap-2 mb-6">
-                  <Brain className="text-purple-500" size={24} />
-                  <h2 className="text-xl font-semibold text-white">Multi-Agent System Logs</h2>
-                </div>
-                <div className="space-y-3">
-                  {agentLogs.map((log, idx) => (
-                    <div key={idx} className="p-4 bg-black border border-gray-800 rounded-lg">
-                      <div className="text-sm font-medium text-purple-400">{log.agent}</div>
-                      <div className="text-sm text-gray-300 mt-1">{log.action}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+@app.get("/api/test/daily/{student_id}")
+async def get_daily_test(student_id: str):
+    if student_id not in STUDENTS_DB:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    student = STUDENTS_DB[student_id]
+    test_id = str(uuid.uuid4())
+    questions = UniversalAgentSystem.generate_daily_test(student["subjects"])
+    
+    TESTS_DB[test_id] = questions
+    
+    return {
+        "test_id": test_id,
+        "questions": questions
+    }
 
-      {/* Reasoning Modal */}
-      {showReasoningModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50" onClick={() => setShowReasoningModal(null)}>
-          <div className="bg-gray-900 border border-purple-800 rounded-lg p-6 max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-              <Brain className="text-purple-500" size={20} />
-              Agent Reasoning
-            </h3>
-            {showReasoningModal === 'system' && (
-              <div className="space-y-2 text-sm bg-black border border-gray-800 rounded p-4">
-                <div><span className="text-purple-400">Context Agent:</span> <span className="text-gray-300">Student model stable, no drift signals</span></div>
-                <div><span className="text-purple-400">Monitoring Agent:</span> <span className="text-gray-300">7-day consistency streak detected</span></div>
-                <div><span className="text-purple-400">Decision:</span> <span className="text-gray-300">Maintain current strategy</span></div>
-              </div>
-            )}
-            {showReasoningModal === 'planning' && (
-              <div className="space-y-2 text-sm bg-black border border-gray-800 rounded p-4">
-                <div><span className="text-purple-400">Strategy Agent:</span> <span className="text-gray-300">Weak areas prioritized based on input</span></div>
-                <div><span className="text-purple-400">Planning Agent:</span> <span className="text-gray-300">Tasks fitted to {formData.studyHours}-hour daily window</span></div>
-                <div><span className="text-purple-400">Execution Agent:</span> <span className="text-gray-300">High-effort tasks scheduled for peak hours</span></div>
-              </div>
-            )}
-            {showReasoningModal === 'drift' && (
-              <div className="space-y-2 text-sm bg-black border border-gray-800 rounded p-4">
-                <div className="text-gray-300">Monitoring Agent continuously tracks pace, consistency, and cognitive load. No drift patterns detected. System will auto-adjust if signals emerge.</div>
-              </div>
-            )}
-            <button 
-              onClick={() => setShowReasoningModal(null)}
-              className="mt-4 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded text-sm text-white w-full transition-all"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
+@app.post("/api/test/submit")
+async def submit_test(submission: TestSubmission):
+    if submission.test_id not in TESTS_DB:
+        raise HTTPException(status_code=404, detail="Test not found")
+    
+    questions = TESTS_DB[submission.test_id]
+    score = 0
+    detailed_results = []
+    
+    for question in questions:
+        user_answer = submission.answers.get(question["id"])
+        is_correct = user_answer == question["correct"]
+        
+        if is_correct:
+            score += 1
+        
+        detailed_results.append({
+            "question_id": question["id"],
+            "correct": is_correct,
+            "user_answer": user_answer,
+            "correct_answer": question["correct"],
+            "explanation": question["explanation"]
+        })
+    
+    return {
+        "score": score,
+        "total": len(questions),
+        "accuracy": round((score / len(questions)) * 100, 2),
+        "detailed_results": detailed_results
+    }
 
-export default StudyOS;
+@app.get("/api/performance/{student_id}")
+async def get_performance(student_id: str):
+    if student_id not in STUDENTS_DB:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    student = STUDENTS_DB[student_id]
+    
+    # Generate subject-wise performance
+    subject_performance = []
+    for subject in student["subjects"]:
+        accuracy = 60 + (hash(subject) % 30)  # Pseudo-random but consistent
+        subject_performance.append({
+            "subject": subject,
+            "accuracy": accuracy,
+            "weightage": student["subject_weightages"].get(subject, 25)
+        })
+    
+    return {
+        "overall": {
+            "accuracy": sum(s["accuracy"] for s in subject_performance) // len(subject_performance) if subject_performance else 0,
+            "streak": 0,
+            "tests_taken": 0
+        },
+        "subject_wise": subject_performance,
+        "weak_topics": [],
+        "exam_name": student["exam_name"]
+    }
+
+@app.get("/api/journey/{student_id}")
+async def get_journey_map(student_id: str):
+    if student_id not in STUDENTS_DB:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    student = STUDENTS_DB[student_id]
+    journey = UniversalAgentSystem.generate_learning_journey(
+        student["deadline"],
+        student["subjects"],
+        student["study_style"],
+        student["exam_type"]
+    )
+    
+    return {
+        "weeks": journey,
+        "current_week": 1,
+        "total_weeks": len(journey),
+        "exam_name": student["exam_name"]
+    }
+
+@app.on_event("startup")
+async def startup_event():
+    print("=" * 60)
+    print("🚀 StudyOS Universal API Starting...")
+    print("=" * 60)
+    print("📚 Universal Multi-Agent AI Learning System")
+    print("🎯 Supports: ANY Exam, ANY Subject, FULLY Adaptive")
+    print("🤖 Agents: Context | Strategy | Planning | Execution | Orchestrator")
+    print("=" * 60)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    print("\n🛑 StudyOS Universal API Shutting Down...")
